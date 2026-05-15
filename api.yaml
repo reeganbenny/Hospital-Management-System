@@ -1,0 +1,764 @@
+openapi: 3.0.3
+info:
+  title: MediCare HMS API
+  description: Hospital Management System - REST API for patients, doctors, and admins.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:5001
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Login, register, current user
+  - name: Common
+    description: Public or shared endpoints (departments, doctor search)
+  - name: Patient
+    description: Patient role - dashboard, profile, appointments, export
+  - name: Doctor
+    description: Doctor role - availability, appointments, patients
+  - name: Admin
+    description: Admin role - dashboard, doctors, patients, appointments, departments
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  security:
+    - bearerAuth: []
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [admin, doctor, patient] }
+        is_blacklisted: { type: boolean }
+    Doctor:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        name: { type: string }
+        qualification: { type: string }
+        specialization: { type: string }
+        experience: { type: integer }
+        department_id: { type: integer }
+        department_name: { type: string }
+        contact_number: { type: string }
+        is_available: { type: boolean }
+        availability: { type: array, items: {} }
+    Department:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        doctors_count: { type: integer }
+    Patient:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        name: { type: string }
+        date_of_birth: { type: string, format: date }
+        contact_number: { type: string }
+        address: { type: string }
+        blood_group: { type: string }
+        is_blocked: { type: boolean }
+    Appointment:
+      type: object
+      properties:
+        id: { type: integer }
+        patient_id: { type: integer }
+        doctor_id: { type: integer }
+        patient_name: { type: string }
+        doctor_name: { type: string }
+        specialization: { type: string }
+        date: { type: string, format: date }
+        time: { type: string }
+        status: { type: string, enum: [Booked, Completed, Cancelled] }
+        reason: { type: string }
+        treatment: { $ref: '#/components/schemas/Treatment' }
+    Treatment:
+      type: object
+      properties:
+        id: { type: integer }
+        appointment_id: { type: integer }
+        diagnosis: { type: string }
+        prescription: { type: string }
+        notes: { type: string }
+        next_visit_suggested: { type: string, format: date }
+
+paths:
+  # --- Auth ---
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  user: { type: object }
+        '400': { description: Username and password required }
+        '401': { description: Invalid credentials }
+        '403': { description: Account disabled }
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register patient
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password, name]
+              properties:
+                username: { type: string }
+                email: { type: string }
+                password: { type: string }
+                name: { type: string }
+                contact_number: { type: string }
+                address: { type: string }
+                date_of_birth: { type: string, format: date }
+      responses:
+        '201': { description: Created; returns access_token and user }
+        '400': { description: Missing required fields }
+        '409': { description: Username or email already taken }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user (JWT required)
+      responses:
+        '200': { description: User + doctor/patient if applicable }
+        '403': { description: Account disabled }
+        '404': { description: User not found }
+
+  # --- Common ---
+  /api/departments:
+    get:
+      tags: [Common]
+      summary: List departments (public)
+      security: []
+      responses:
+        '200':
+          description: List of departments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Department' }
+
+  /api/doctors/search:
+    get:
+      tags: [Common]
+      summary: Search doctors with availability (patient or admin, JWT)
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Search by doctor name
+        - name: specialization
+          in: query
+          schema: { type: string }
+        - name: department_id
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: List of doctors with availability_slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Doctor' }
+
+  # --- Patient ---
+  /api/patient/dashboard:
+    get:
+      tags: [Patient]
+      summary: Patient dashboard (departments, doctor availability, upcoming/past appointments)
+      responses:
+        '200':
+          description: departments, doctor_availability, upcoming_appointments, past_appointments
+
+  /api/patient/profile:
+    get:
+      tags: [Patient]
+      summary: Get patient profile
+      responses:
+        '200': { description: Patient object }
+    put:
+      tags: [Patient]
+      summary: Update patient profile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                contact_number: { type: string }
+                address: { type: string }
+                blood_group: { type: string }
+                date_of_birth: { type: string }
+      responses:
+        '200': { description: Updated patient }
+
+  /api/patient/appointments:
+    get:
+      tags: [Patient]
+      summary: List my appointments
+      responses:
+        '200':
+          description: List of appointments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Appointment' }
+    post:
+      tags: [Patient]
+      summary: Book appointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctor_id, date, time]
+              properties:
+                doctor_id: { type: integer }
+                date: { type: string, format: date }
+                time: { type: string }
+                reason: { type: string }
+      responses:
+        '201': { description: Appointment created }
+        '400': { description: Invalid slot or missing fields }
+        '404': { description: Doctor not found }
+
+  /api/patient/appointments/{id}/cancel:
+    post:
+      tags: [Patient]
+      summary: Cancel appointment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Cancelled }
+        '403': { description: Not allowed }
+        '404': { description: Not found }
+
+  /api/patient/appointments/{id}/reschedule:
+    post:
+      tags: [Patient]
+      summary: Reschedule appointment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, time]
+              properties:
+                date: { type: string, format: date }
+                time: { type: string }
+      responses:
+        '200': { description: Rescheduled }
+        '400': { description: Slot not available }
+        '404': { description: Not found }
+
+  /api/patient/treatments:
+    get:
+      tags: [Patient]
+      summary: My treatment history
+      responses:
+        '200':
+          description: List of appointments with treatment data
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Appointment' }
+
+  /api/patient/export-csv:
+    post:
+      tags: [Patient]
+      summary: Trigger async CSV export of treatments
+      responses:
+        '200':
+          description: Returns task_id for polling
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+
+  /api/patient/export-csv/{task_id}:
+    get:
+      tags: [Patient]
+      summary: Poll export status; when completed, result has download_url and filename
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: status pending | completed | failed; result has download_url when completed
+
+  # --- Doctor ---
+  /api/doctor/recurring:
+    get:
+      tags: [Doctor]
+      summary: Get recurring availability (JSON)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  availability: { type: array }
+    put:
+      tags: [Doctor]
+      summary: Update recurring availability
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [availability]
+              properties:
+                availability: { type: array }
+      responses:
+        '200': { description: Updated availability }
+        '400': { description: availability required or must be list }
+
+  /api/doctor/availability:
+    get:
+      tags: [Doctor]
+      summary: Merged slots for next 7 days; ?detailed=1 for slots_by_date with status
+      parameters:
+        - name: detailed
+          in: query
+          schema: { type: integer, enum: [1] }
+      responses:
+        '200': { description: Merged slots or slots_by_date }
+    post:
+      tags: [Doctor]
+      summary: Create/update availability slots (and optionally apply recurring)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                slots: { type: array, items: { type: object } }
+                applyRecurring: { type: object }
+      responses:
+        '200': { description: Slots created/updated }
+        '400': { description: slots must be a list }
+
+  /api/doctor/appointments:
+    get:
+      tags: [Doctor]
+      summary: List my appointments
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Appointment' }
+
+  /api/doctor/appointments/{id}:
+    get:
+      tags: [Doctor]
+      summary: Appointment detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Appointment with patient and treatment }
+        '404': { description: Not found }
+    put:
+      tags: [Doctor]
+      summary: Update appointment (e.g. add/update treatment)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                diagnosis: { type: string }
+                prescription: { type: string }
+                notes: { type: string }
+                next_visit_suggested: { type: string, format: date }
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+
+  /api/doctor/appointments/{id}/complete:
+    post:
+      tags: [Doctor]
+      summary: Mark appointment completed and add treatment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                diagnosis: { type: string }
+                prescription: { type: string }
+                notes: { type: string }
+                next_visit_suggested: { type: string }
+      responses:
+        '200': { description: Completed }
+        '400': { description: Already completed or cancelled }
+        '404': { description: Not found }
+
+  /api/doctor/appointments/{id}/cancel:
+    post:
+      tags: [Doctor]
+      summary: Cancel appointment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Cancelled }
+        '404': { description: Not found }
+
+  /api/doctor/patients:
+    get:
+      tags: [Doctor]
+      summary: List my patients (who have appointments with me)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Patient' }
+
+  /api/doctor/patients/{patient_id}/history:
+    get:
+      tags: [Doctor]
+      summary: Patient treatment history (completed appointments with treatment)
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: List of appointments with treatment }
+        '404': { description: Patient not found }
+
+  # --- Admin ---
+  /api/admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Dashboard counts (doctors, patients, appointments, upcoming)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doctors_count: { type: integer }
+                  patients_count: { type: integer }
+                  appointments_count: { type: integer }
+                  upcoming_appointments: { type: integer }
+
+  /api/admin/doctors:
+    get:
+      tags: [Admin]
+      summary: List all doctors
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Doctor' }
+    post:
+      tags: [Admin]
+      summary: Create doctor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, name, department_id]
+              properties:
+                username: { type: string }
+                email: { type: string }
+                password: { type: string }
+                name: { type: string }
+                department_id: { type: integer }
+                qualification: { type: string }
+                specialization: { type: string }
+                experience: { type: integer }
+                contact_number: { type: string }
+      responses:
+        '201': { description: Doctor created }
+        '400': { description: Missing required or invalid department }
+        '409': { description: Username or email taken }
+
+  /api/admin/doctors/{id}:
+    get:
+      tags: [Admin]
+      summary: Get doctor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Doctor }
+        '404': { description: Not found }
+    put:
+      tags: [Admin]
+      summary: Update doctor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                department_id: { type: integer }
+                qualification: { type: string }
+                specialization: { type: string }
+                experience: { type: integer }
+                contact_number: { type: string }
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+    delete:
+      tags: [Admin]
+      summary: Delete doctor (soft delete)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
+
+  /api/admin/doctors/{id}/availability:
+    get:
+      tags: [Admin]
+      summary: Doctor availability slots (next 7 days with status)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: slots_by_date }
+        '404': { description: Doctor not found }
+
+  /api/admin/doctors/{id}/block:
+    post:
+      tags: [Admin]
+      summary: Block or unblock doctor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: doctor object with is_available }
+        '404': { description: Not found }
+
+  /api/admin/appointments:
+    get:
+      tags: [Admin]
+      summary: List appointments (optional ?status=, ?upcoming=1)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: upcoming
+          in: query
+          schema: { type: integer, enum: [1] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Appointment' }
+
+  /api/admin/patients/search:
+    get:
+      tags: [Admin]
+      summary: Search patients by name, ID, or contact
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Patient' }
+
+  /api/admin/patients:
+    get:
+      tags: [Admin]
+      summary: List all patients
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Patient' }
+
+  /api/admin/patients/{id}:
+    get:
+      tags: [Admin]
+      summary: Get patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Patient with username, email }
+        '404': { description: Not found }
+    put:
+      tags: [Admin]
+      summary: Update patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                contact_number: { type: string }
+                address: { type: string }
+                blood_group: { type: string }
+                date_of_birth: { type: string }
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+    delete:
+      tags: [Admin]
+      summary: Delete patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
+
+  /api/admin/patients/{id}/block:
+    post:
+      tags: [Admin]
+      summary: Block or unblock patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: patient object with is_blocked }
+        '404': { description: Not found }
+
+  /api/admin/departments:
+    get:
+      tags: [Admin]
+      summary: List departments
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Department' }
+    post:
+      tags: [Admin]
+      summary: Create department
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '201': { description: Department created }
+        '400': { description: name required }
+        '409': { description: Department already exists }
